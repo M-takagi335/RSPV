@@ -1,0 +1,859 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RSVP Reader</title>
+<style>
+  :root{
+    color-scheme: light dark;
+    --bg:#0f1115;
+    --panel:#171a21;
+    --text:#f5f7fb;
+    --muted:#9da7b5;
+    --accent:#7aa2ff;
+    --border:#2a303b;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;
+    font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP",sans-serif;
+    background:var(--bg);
+    color:var(--text);
+    min-height:100vh;
+  }
+  .app{
+    min-height:100vh;
+    display:grid;
+    grid-template-rows:auto 1fr auto;
+  }
+  header, footer{
+    padding:14px 18px;
+    border-color:var(--border);
+    background:rgba(15,17,21,.96);
+  }
+  header{border-bottom:1px solid var(--border)}
+  footer{border-top:1px solid var(--border)}
+  h1{
+    margin:0;
+    font-size:18px;
+    font-weight:700;
+    letter-spacing:.02em;
+  }
+  main{
+    display:grid;
+    grid-template-columns:minmax(280px,380px) 1fr;
+    min-height:0;
+  }
+  .panel{
+    padding:16px;
+    border-right:1px solid var(--border);
+    background:var(--panel);
+    overflow:auto;
+  }
+  .viewer{
+    min-width:0;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    padding:24px;
+    position:relative;
+    overflow:hidden;
+  }
+  .flash{
+    width:min(100%,1100px);
+    min-height:180px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    text-align:center;
+    font-size:clamp(34px,7vw,96px);
+    line-height:1.22;
+    font-weight:700;
+    letter-spacing:.01em;
+    word-break:keep-all;
+    overflow-wrap:anywhere;
+    padding:24px;
+  }
+  .flash.idle{
+    width:auto;
+    min-height:0;
+    padding:6px 10px;
+    font-size:14px;
+    font-weight:500;
+    color:var(--muted);
+  }
+  .hint{
+    position:absolute;
+    bottom:18px;
+    left:50%;
+    transform:translateX(-50%);
+    color:var(--muted);
+    font-size:12px;
+    white-space:nowrap;
+  }
+  textarea{
+    width:100%;
+    min-height:180px;
+    resize:vertical;
+    border:1px solid var(--border);
+    border-radius:10px;
+    background:#11141a;
+    color:var(--text);
+    padding:12px;
+    font:inherit;
+    line-height:1.6;
+  }
+  .drop{
+    border:1px dashed #4b5566;
+    border-radius:10px;
+    padding:14px;
+    text-align:center;
+    color:var(--muted);
+    margin-bottom:12px;
+    transition:.15s ease;
+  }
+  .drop.drag{
+    border-color:var(--accent);
+    color:var(--text);
+    background:#1c2330;
+  }
+  .row{
+    display:grid;
+    gap:8px;
+    margin:12px 0;
+  }
+  .row.inline{
+    grid-template-columns:1fr auto;
+    align-items:center;
+  }
+  label{
+    color:#d7dce5;
+    font-size:13px;
+  }
+  input[type="number"], select{
+    width:100%;
+    border:1px solid var(--border);
+    border-radius:8px;
+    background:#11141a;
+    color:var(--text);
+    padding:9px 10px;
+    font:inherit;
+  }
+  input[type="range"]{width:100%}
+  button,.filebtn{
+    appearance:none;
+    border:1px solid var(--border);
+    border-radius:9px;
+    background:#202633;
+    color:var(--text);
+    padding:9px 12px;
+    font:inherit;
+    cursor:pointer;
+  }
+  button:hover,.filebtn:hover{background:#293244}
+  button.primary{
+    background:#2f66d8;
+    border-color:#2f66d8;
+  }
+  button.primary:hover{background:#3975ef}
+  .controls{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:8px;
+    margin-top:12px;
+  }
+  .small{
+    font-size:12px;
+    color:var(--muted);
+  }
+  .status{
+    display:flex;
+    justify-content:space-between;
+    gap:10px;
+    align-items:center;
+    font-size:12px;
+    color:var(--muted);
+  }
+  #progress{
+    width:100%;
+    accent-color:var(--accent);
+    cursor:pointer;
+  }
+  .filebtn{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+  }
+  #fileInput{display:none}
+  .filename{
+    margin-top:8px;
+    font-size:12px;
+    color:var(--muted);
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .error{
+    color:#ff9a9a;
+    font-size:12px;
+    min-height:1.2em;
+    margin-top:8px;
+  }
+  @media (max-width:820px){
+    main{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+    .panel{border-right:0;border-bottom:1px solid var(--border);max-height:48vh}
+    .flash{min-height:150px}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header><h1>RSVP Reader</h1></header>
+
+  <main>
+    <aside class="panel">
+      <div class="row">
+        <label for="urlInput">WebページURL（青空文庫など）</label>
+        <div style="display:grid;grid-template-columns:1fr auto;gap:8px">
+          <input id="urlInput" type="url" placeholder="https://www.aozora.gr.jp/..." style="min-width:0;border:1px solid var(--border);border-radius:8px;background:#11141a;color:var(--text);padding:9px 10px;font:inherit">
+          <button id="loadUrl" class="primary">URL読込</button>
+        </div>
+        <div class="small">青空文庫の作品HTMLページに対応。一般的なWebページも本文抽出を試みます。</div>
+      </div>
+
+      <div id="dropZone" class="drop">
+        TXT / HTML / PDF をドロップ
+        <div style="margin-top:10px">
+          <label class="filebtn" for="fileInput">ファイルを選択</label>
+          <input id="fileInput" type="file" accept=".txt,.text,.html,.htm,.pdf,text/plain,text/html,application/pdf">
+        </div>
+        <div id="fileName" class="filename"></div>
+      </div>
+
+      <div class="row">
+        <label for="sourceText">文章を直接入力</label>
+        <textarea id="sourceText" placeholder="ここに文章を入力・貼り付けしてください。"></textarea>
+      </div>
+
+      <button id="loadText" class="primary" style="width:100%">この文章を読み込む</button>
+
+      <div class="row">
+        <label for="speed">速度: <strong><span id="speedLabel">300</span> WPM</strong></label>
+        <input id="speed" type="range" min="60" max="1200" step="10" value="300">
+      </div>
+
+      <div class="row inline">
+        <label for="speedNumber">速度を数値入力</label>
+        <input id="speedNumber" type="number" min="60" max="3000" step="10" value="300" style="width:100px">
+      </div>
+
+      <div class="row">
+        <label for="chunkSize">1回に表示する語数</label>
+        <select id="chunkSize">
+          <option value="1" selected>1語</option>
+          <option value="2">2語</option>
+          <option value="3">3語</option>
+          <option value="4">4語</option>
+          <option value="5">5語</option>
+          <option value="8">8語</option>
+        </select>
+      </div>
+
+      <div class="controls">
+        <button id="prev">◀</button>
+        <button id="play" class="primary">再生</button>
+        <button id="pause">停止</button>
+        <button id="next">▶</button>
+      </div>
+
+      <div class="controls" style="grid-template-columns:1fr 1fr">
+        <button id="restart">最初へ</button>
+        <button id="fullscreen">全画面</button>
+      </div>
+
+      <div class="row">
+        <input id="progress" type="range" min="0" max="0" value="0" step="1" aria-label="再生位置">
+        <div class="status">
+          <span><input id="posInput" type="number" min="0" max="0" step="1" value="0" aria-label="位置を数値入力" style="width:84px;border:1px solid var(--border);border-radius:6px;background:#11141a;color:var(--text);padding:3px 6px;font:inherit"> / <span id="counter">0</span></span>
+          <span id="timeLeft">残り 0:00</span>
+        </div>
+      </div>
+
+      <div class="small">
+        Space: 再生/停止　← →: 前後移動<br>
+        PDFはページ順にテキストを抽出します。
+      </div>
+      <div id="error" class="error"></div>
+    </aside>
+
+    <section class="viewer" id="viewer">
+      <div id="flash" class="flash idle">文章を入力するか、ファイルを選択してください</div>
+      <div class="hint">中央を見たまま読む RSVP 表示</div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="small">ファイル処理はブラウザ内で行われます。</div>
+  </footer>
+</div>
+
+<script type="module">
+const els = {
+  sourceText: document.getElementById('sourceText'),
+  loadText: document.getElementById('loadText'),
+  urlInput: document.getElementById('urlInput'),
+  loadUrl: document.getElementById('loadUrl'),
+  fileInput: document.getElementById('fileInput'),
+  dropZone: document.getElementById('dropZone'),
+  fileName: document.getElementById('fileName'),
+  speed: document.getElementById('speed'),
+  speedNumber: document.getElementById('speedNumber'),
+  speedLabel: document.getElementById('speedLabel'),
+  chunkSize: document.getElementById('chunkSize'),
+  play: document.getElementById('play'),
+  pause: document.getElementById('pause'),
+  prev: document.getElementById('prev'),
+  next: document.getElementById('next'),
+  restart: document.getElementById('restart'),
+  fullscreen: document.getElementById('fullscreen'),
+  flash: document.getElementById('flash'),
+  progress: document.getElementById('progress'),
+  counter: document.getElementById('counter'),
+  posInput: document.getElementById('posInput'),
+  timeLeft: document.getElementById('timeLeft'),
+  error: document.getElementById('error'),
+  viewer: document.getElementById('viewer')
+};
+
+let tokens = [];
+let chunks = [];
+let index = 0;
+let timer = null;
+let playing = false;
+
+function setError(msg=''){ els.error.textContent = msg; }
+
+function normalizeText(text){
+  return text
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// 日本語では空白が少ないため、句読点や文節をなるべく保ちながら分割。
+// 空白のある言語では通常の単語単位。
+function tokenize(text){
+  text = normalizeText(text);
+  if(!text) return [];
+
+  const hasManySpaces = (text.match(/\s/g) || []).length > Math.max(5, text.length / 20);
+  if(hasManySpaces){
+    const raw = text.split(/\s+/).filter(Boolean);
+    const out = [];
+    for(const token of raw){
+      if(/^[、。，．！？!?，,；;：:]+$/u.test(token) && out.length){
+        out[out.length - 1] += token;
+      }else{
+        out.push(token);
+      }
+    }
+    return out;
+  }
+
+  // 日本語向け: 句読点は必ず直前の文字列に付ける
+  const segments = text
+    .split(/(?<=[。！？!?、，,；;：:\n])/u)
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  const out = [];
+  for(const seg of segments){
+    let parts;
+    if(seg.length <= 8){
+      parts = [seg];
+    }else{
+      parts = seg.match(/.{1,6}?(?:[はがをにへとでやも]|[、。！？!?，,；;：:]|$)/gu) || [seg];
+    }
+
+    for(let p of parts){
+      p = p.trim();
+      if(!p) continue;
+
+      // 句読点だけの断片は前のチャンクへ結合
+      if(/^[、。，．！？!?，,；;：:]+$/u.test(p) && out.length){
+        out[out.length - 1] += p;
+      }else{
+        out.push(p);
+      }
+    }
+  }
+
+  return out;
+}
+
+function buildChunks(){
+  const size = Math.max(1, Number(els.chunkSize.value) || 1);
+  chunks = [];
+  for(let i=0;i<tokens.length;i+=size){
+    chunks.push(tokens.slice(i, i+size).join(' '));
+  }
+  if(index >= chunks.length) index = Math.max(0, chunks.length - 1);
+  render();
+}
+
+function loadContent(text){
+  stop();
+  index = 0;
+  tokens = tokenize(text);
+  buildChunks();
+  if(!tokens.length){
+    els.flash.classList.add('idle');
+    els.flash.textContent = '読み込める文章がありません';
+    setError('文章を入力するか、テキストを含むファイルを選択してください。');
+  } else {
+    setError('');
+  }
+}
+
+function render(){
+  if(!chunks.length){
+    els.flash.classList.add('idle');
+    els.flash.textContent = '文章を入力するか、ファイルを選択してください';
+    els.progress.max = 0;
+    els.progress.value = 0;
+    els.counter.textContent = '0';
+    els.posInput.value = 0;
+    els.posInput.max = 0;
+    els.timeLeft.textContent = '残り 0:00';
+    return;
+  }
+
+  els.flash.classList.remove('idle');
+  els.flash.textContent = chunks[index] ?? '';
+  els.progress.max = Math.max(0, chunks.length - 1);
+  els.progress.value = index;
+  els.counter.textContent = chunks.length;
+  els.posInput.max = chunks.length;
+  els.posInput.min = 1;
+  if(document.activeElement !== els.posInput) els.posInput.value = index + 1;
+
+  const wpm = getSpeed();
+  const wordsPerChunk = Math.max(1, Number(els.chunkSize.value) || 1);
+  const remainingChunks = Math.max(0, chunks.length - index - 1);
+  const seconds = Math.round((remainingChunks * wordsPerChunk / wpm) * 60);
+  const m = Math.floor(seconds / 60);
+  const s = String(seconds % 60).padStart(2,'0');
+  els.timeLeft.textContent = `残り ${m}:${s}`;
+}
+
+function getSpeed(){
+  return Math.max(10, Number(els.speedNumber.value) || 300);
+}
+
+function intervalMsForCurrent(){
+  const wpm = getSpeed();
+  const words = Math.max(1, Number(els.chunkSize.value) || 1);
+  let ms = 60000 * words / wpm;
+
+  // 句読点のところだけ少し長く見せる
+  const current = chunks[index] || '';
+  if(/[。！？!?]$/.test(current)) ms *= 1.7;
+  else if(/[、，,；;：:]$/.test(current)) ms *= 1.25;
+
+  return Math.max(25, ms);
+}
+
+function scheduleNext(){
+  clearTimeout(timer);
+  if(!playing || !chunks.length) return;
+
+  timer = setTimeout(() => {
+    if(index < chunks.length - 1){
+      index++;
+      render();
+      scheduleNext();
+    } else {
+      stop();
+    }
+  }, intervalMsForCurrent());
+}
+
+function play(){
+  if(!chunks.length) return;
+  playing = true;
+  els.play.textContent = '再生中';
+  scheduleNext();
+}
+
+function stop(){
+  playing = false;
+  clearTimeout(timer);
+  timer = null;
+  els.play.textContent = '再生';
+}
+
+function toggle(){
+  playing ? stop() : play();
+}
+
+function step(delta){
+  if(!chunks.length) return;
+  index = Math.max(0, Math.min(chunks.length - 1, index + delta));
+  render();
+  if(playing) scheduleNext();
+}
+
+function syncSpeed(value){
+  value = Math.max(60, Math.min(3000, Number(value) || 300));
+  els.speedNumber.value = value;
+  els.speed.value = Math.min(1200, value);
+  els.speedLabel.textContent = value;
+  render();
+  if(playing) scheduleNext();
+}
+
+
+function extractReadableTextFromHtml(raw, sourceUrl=''){
+  const doc = new DOMParser().parseFromString(raw, 'text/html');
+
+  doc.querySelectorAll(
+    'script,style,noscript,svg,canvas,nav,header,footer,aside,form,button'
+  ).forEach(el => el.remove());
+
+  // 青空文庫: 本文は通常 .main_text
+  let root = doc.querySelector('.main_text');
+
+  // 一般ページ向けの候補
+  if(!root){
+    root =
+      doc.querySelector('article') ||
+      doc.querySelector('main') ||
+      doc.querySelector('[role="main"]') ||
+      doc.body;
+  }
+
+  if(!root) return '';
+
+  // ルビ（読み仮名）と括弧、注記を除去し、brは改行に
+  root.querySelectorAll('rt,rp').forEach(el => el.remove());
+  root.querySelectorAll('.bibliographical_information, .notation_notes').forEach(el => el.remove());
+  root.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+
+  let text = root.textContent || '';
+
+  // 青空文庫で本文末尾以降が混ざった場合の簡易カット
+  if(/aozora\.gr\.jp/i.test(sourceUrl)){
+    const cuts = [
+      '\n底本：',
+      '\n入力：',
+      '\n校正：',
+      '\n青空文庫作成ファイル：'
+    ];
+    let cutAt = -1;
+    for(const c of cuts){
+      const p = text.indexOf(c);
+      if(p >= 0 && (cutAt < 0 || p < cutAt)) cutAt = p;
+    }
+    if(cutAt >= 0) text = text.slice(0, cutAt);
+  }
+
+  return normalizeText(text);
+}
+
+function jinaUrl(url){
+  if(/^https?:\/\//i.test(url)){
+    return 'https://r.jina.ai/' + url;
+  }
+  return url;
+}
+
+function decodeBuffer(buf, contentType=''){
+  const head = new TextDecoder('latin1').decode(buf.slice(0, 2048));
+  const m = head.match(/charset\s*=\s*["']?([\w-]+)/i) || contentType.match(/charset=([\w-]+)/i);
+  const enc = m ? m[1] : 'utf-8';
+  try{ return new TextDecoder(enc).decode(buf); }
+  catch{ return new TextDecoder('utf-8').decode(buf); }
+}
+
+async function fetchWithTimeout(u, ms=8000){
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try{
+    return await fetch(u, {cache:'no-store', signal: ctrl.signal});
+  }finally{
+    clearTimeout(t);
+  }
+}
+
+// 全経路を同時に試し、最初に成功したものを採用（タイムアウト付き）
+async function fetchTextUrl(url){
+  const enc = encodeURIComponent(url);
+  const candidates = [
+    {u:url},
+    {u:'https://r.jina.ai/' + url, headers:{'X-Return-Format':'html'}, utf8:true},
+    {u:'https://corsproxy.io/?' + enc},
+    {u:'https://api.allorigins.win/raw?url=' + enc},
+    {u:'https://api.codetabs.com/v1/proxy?quest=' + enc},
+    {u:'https://thingproxy.freeboard.io/fetch/' + url}
+  ];
+  const tries = candidates.map(async c => {
+    const host = new URL(c.u).hostname;
+    try{
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 12000);
+      let res;
+      try{
+        res = await fetch(c.u, {cache:'no-store', signal:ctrl.signal, headers:c.headers});
+      }finally{
+        clearTimeout(t);
+      }
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      const buf = await res.arrayBuffer();
+      const text = c.utf8
+        ? new TextDecoder('utf-8').decode(buf)
+        : decodeBuffer(buf, res.headers.get('content-type') || '');
+      if(!/<html|<body|<div|<p|<br/i.test(text)) throw new Error('not html');
+      return text;
+    }catch(err){
+      throw new Error(`${host}: ${err.message}`);
+    }
+  });
+  return await Promise.any(tries);
+}
+
+async function loadFromUrl(){
+  const url = (els.urlInput.value || '').trim();
+  if(!url){
+    setError('URLを入力してください。');
+    return;
+  }
+
+  let parsed;
+  try{
+    parsed = new URL(url);
+    if(!/^https?:$/.test(parsed.protocol)) throw new Error();
+  }catch{
+    setError('http:// または https:// から始まるURLを入力してください。');
+    return;
+  }
+
+  stop();
+  setError('');
+  els.loadUrl.disabled = true;
+  els.loadUrl.textContent = '読込中…';
+  els.flash.classList.add('idle');
+  els.flash.textContent = 'Webページを読み込み中…';
+
+  try{
+    let text = '';
+
+    // 1) 直接取得 → CORSプロキシ（Shift_JIS対応）
+    try{
+      let target = url;
+      let raw = await fetchTextUrl(target);
+
+      // 青空文庫の図書カードなら、本文HTMLへのリンクを辿る
+      const probe = new DOMParser().parseFromString(raw, 'text/html');
+      if(!probe.querySelector('.main_text')){
+        const a = [...probe.querySelectorAll('a[href]')]
+          .find(a => /files\/[^"]+\.html?$/i.test(a.getAttribute('href')));
+        if(a){
+          target = new URL(a.getAttribute('href'), url).href;
+          raw = await fetchTextUrl(target);
+        }
+      }
+      text = extractReadableTextFromHtml(raw, target);
+    }catch(err){
+      window.__lastFetchErrors = (err.errors || [err]).map(e => e.message);
+      console.warn('Direct/proxy fetch failed; trying reader fallback', err);
+    }
+
+    // 2) CORS等で直接取れない場合は Jina Reader を利用
+    if(!text || text.length < 20){
+      const res = await fetchWithTimeout(jinaUrl(url), 15000);
+      if(!res.ok) throw new Error(`Reader HTTP ${res.status}`);
+      let rawText = await res.text();
+
+      // Reader のMarkdownから不要な先頭メタ情報を軽く整理
+      rawText = rawText
+        .replace(/^Title:.*$/gmi, '')
+        .replace(/^URL Source:.*$/gmi, '')
+        .replace(/^Published Time:.*$/gmi, '')
+        .replace(/^Markdown Content:\s*$/gmi, '')
+        .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+
+      text = normalizeText(rawText);
+    }
+
+    if(!text){
+      throw new Error('No readable text');
+    }
+
+    els.sourceText.value = text;
+    loadContent(text);
+    els.fileName.textContent = parsed.hostname;
+  }catch(err){
+    console.error(err);
+    els.flash.classList.add('idle');
+    els.flash.textContent = 'URLを読み込めませんでした';
+    const detail = (window.__lastFetchErrors || []).join(' / ');
+    setError('URLの読み込みに失敗しました。' + detail);
+  }finally{
+    els.loadUrl.disabled = false;
+    els.loadUrl.textContent = 'URL読込';
+  }
+}
+
+async function readFile(file){
+  setError('');
+  els.fileName.textContent = file.name;
+
+  const name = file.name.toLowerCase();
+  const type = file.type;
+
+  try{
+    if(name.endsWith('.pdf') || type === 'application/pdf'){
+      els.flash.classList.add('idle');
+      els.flash.textContent = 'PDFを読み込み中…';
+
+      const pdfjsLib = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs');
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs';
+
+      const data = new Uint8Array(await file.arrayBuffer());
+      const pdf = await pdfjsLib.getDocument({data}).promise;
+      let text = '';
+
+      for(let p=1; p<=pdf.numPages; p++){
+        const page = await pdf.getPage(p);
+        const content = await page.getTextContent();
+        text += content.items.map(item => item.str).join(' ') + '\n';
+      }
+
+      els.sourceText.value = normalizeText(text);
+      loadContent(text);
+      return;
+    }
+
+    const raw = await file.text();
+
+    if(name.endsWith('.html') || name.endsWith('.htm') || type === 'text/html'){
+      const doc = new DOMParser().parseFromString(raw, 'text/html');
+      doc.querySelectorAll('script,style,noscript,svg,canvas').forEach(el => el.remove());
+      const text = doc.body?.innerText || doc.body?.textContent || '';
+      els.sourceText.value = normalizeText(text);
+      loadContent(text);
+      return;
+    }
+
+    els.sourceText.value = normalizeText(raw);
+    loadContent(raw);
+
+  }catch(err){
+    console.error(err);
+    els.flash.classList.add('idle');
+    els.flash.textContent = 'ファイルを読み込めませんでした';
+    setError('ファイルの読み込みに失敗しました。PDFの場合はインターネット接続が必要です。');
+  }
+}
+
+els.loadText.addEventListener('click', () => loadContent(els.sourceText.value));
+els.loadUrl.addEventListener('click', loadFromUrl);
+els.urlInput.addEventListener('keydown', e => {
+  if(e.key === 'Enter'){
+    e.preventDefault();
+    loadFromUrl();
+  }
+});
+els.fileInput.addEventListener('change', e => {
+  const file = e.target.files?.[0];
+  if(file) readFile(file);
+});
+
+['dragenter','dragover'].forEach(ev => els.dropZone.addEventListener(ev, e => {
+  e.preventDefault();
+  els.dropZone.classList.add('drag');
+}));
+['dragleave','drop'].forEach(ev => els.dropZone.addEventListener(ev, e => {
+  e.preventDefault();
+  els.dropZone.classList.remove('drag');
+}));
+els.dropZone.addEventListener('drop', e => {
+  const file = e.dataTransfer.files?.[0];
+  if(file) readFile(file);
+});
+
+els.speed.addEventListener('input', () => syncSpeed(els.speed.value));
+els.speedNumber.addEventListener('change', () => syncSpeed(els.speedNumber.value));
+els.speedNumber.addEventListener('input', () => {
+  els.speedLabel.textContent = els.speedNumber.value || '300';
+});
+
+els.chunkSize.addEventListener('change', () => {
+  stop();
+  buildChunks();
+});
+
+els.play.addEventListener('click', play);
+els.pause.addEventListener('click', stop);
+els.prev.addEventListener('click', () => step(-1));
+els.next.addEventListener('click', () => step(1));
+els.restart.addEventListener('click', () => {
+  stop();
+  index = 0;
+  render();
+});
+els.fullscreen.addEventListener('click', async () => {
+  try{
+    if(!document.fullscreenElement) await els.viewer.requestFullscreen();
+    else await document.exitFullscreen();
+  }catch{}
+});
+
+els.progress.addEventListener('input', () => {
+  if(!chunks.length) return;
+  index = Math.max(0, Math.min(chunks.length - 1, Number(els.progress.value) || 0));
+  render();
+});
+
+function jumpToInput(){
+  if(!chunks.length) return;
+  const n = Math.max(1, Math.min(chunks.length, Math.round(Number(els.posInput.value) || 1)));
+  index = n - 1;
+  els.posInput.value = n;
+  render();
+  if(playing) scheduleNext();
+}
+els.posInput.addEventListener('change', jumpToInput);
+els.posInput.addEventListener('keydown', e => {
+  if(e.key === 'Enter'){ e.preventDefault(); jumpToInput(); els.posInput.blur(); }
+});
+
+els.progress.addEventListener('change', () => {
+  if(playing) scheduleNext();
+});
+
+document.addEventListener('keydown', e => {
+  if(['TEXTAREA','INPUT','SELECT'].includes(document.activeElement?.tagName)) return;
+  if(e.code === 'Space'){
+    e.preventDefault();
+    toggle();
+  }else if(e.code === 'ArrowLeft'){
+    e.preventDefault();
+    step(-1);
+  }else if(e.code === 'ArrowRight'){
+    e.preventDefault();
+    step(1);
+  }
+});
+
+syncSpeed(300);
+render();
+</script>
+</body>
+</html>
