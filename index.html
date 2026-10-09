@@ -62,6 +62,7 @@
     align-items:center;
     justify-content:center;
     padding:24px;
+    padding-bottom:44px;
     position:relative;
     overflow:hidden;
   }
@@ -89,6 +90,41 @@
     font-weight:500;
     color:var(--muted);
   }
+  .context{
+    flex:none;
+    width:min(100%,900px);
+    height:32vh;
+    margin-top:12px;
+    overflow-y:auto;
+    position:relative;
+    padding:12px 16px;
+    border:1px solid var(--border);
+    border-radius:10px;
+    background:#11141a;
+    color:var(--muted);
+    font-family:var(--flash-font);
+    font-size:15px;
+    line-height:1.95;
+    word-break:break-all;
+  }
+  .ctxbtn{
+    position:absolute;
+    top:12px;
+    right:12px;
+    padding:6px 10px;
+    font-size:12px;
+    color:var(--muted);
+    background:rgba(32,38,51,.85);
+    z-index:2;
+  }
+  .jumpbtn{left:12px;right:auto}
+  .jumpbtn.active{background:#2f66d8;border-color:#2f66d8;color:#fff}
+  .context.jumping{outline:2px solid var(--accent)}
+  .context.jumping span{cursor:pointer}
+  .context.jumping span:hover{background:#2f66d8;color:#fff}
+  .context span{border-radius:3px}
+  .context span:hover{color:var(--text)}
+  .context span.cur{background:var(--accent);color:#0f1115}
   .hint{
     position:absolute;
     bottom:18px;
@@ -278,6 +314,12 @@
         </select>
       </div>
 
+      <div class="row">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="ctxToggle" checked> 文章中の現在位置を表示
+        </label>
+      </div>
+
       <div class="controls">
         <button id="prev">◀</button>
         <button id="play" class="primary">再生</button>
@@ -307,6 +349,9 @@
 
     <section class="viewer" id="viewer">
       <div id="flash" class="flash idle">文章を入力するか、ファイルを選択してください</div>
+      <div id="context" class="context" style="display:none"></div>
+      <button id="ctxBtn" class="ctxbtn" title="ショートカット: H">文章を隠す</button>
+      <button id="jumpBtn" class="ctxbtn jumpbtn">ここに飛ぶ</button>
       <div class="hint">中央を見たまま読む RSVP 表示</div>
     </section>
   </main>
@@ -330,6 +375,10 @@ const els = {
   speedLabel: document.getElementById('speedLabel'),
   chunkSize: document.getElementById('chunkSize'),
   fontSelect: document.getElementById('fontSelect'),
+  context: document.getElementById('context'),
+  ctxToggle: document.getElementById('ctxToggle'),
+  ctxBtn: document.getElementById('ctxBtn'),
+  jumpBtn: document.getElementById('jumpBtn'),
   play: document.getElementById('play'),
   pause: document.getElementById('pause'),
   prev: document.getElementById('prev'),
@@ -346,6 +395,10 @@ const els = {
 };
 
 let tokens = [];
+let joiner = ' ';
+let ctxVersion = 0;
+let ctxBuiltVersion = -1;
+let winStart = 0, winEnd = 0, curEl = null;
 let chunks = [];
 let index = 0;
 let timer = null;
@@ -370,6 +423,7 @@ function tokenize(text){
 
   const hasManySpaces = (text.match(/\s/g) || []).length > Math.max(5, text.length / 20);
   if(hasManySpaces){
+    joiner = ' ';
     const raw = text.split(/\s+/).filter(Boolean);
     const out = [];
     for(const token of raw){
@@ -383,6 +437,7 @@ function tokenize(text){
   }
 
   // 日本語向け: 句読点は必ず直前の文字列に付ける
+  joiner = '';
   const segments = text
     .split(/(?<=[。！？!?、，,；;：:\n])/u)
     .map(s => s.trim())
@@ -416,6 +471,7 @@ function tokenize(text){
 function buildChunks(){
   const size = Math.max(1, Number(els.chunkSize.value) || 1);
   chunks = [];
+  ctxVersion++;
   for(let i=0;i<tokens.length;i+=size){
     chunks.push(tokens.slice(i, i+size).join(' '));
   }
@@ -450,6 +506,7 @@ function saveState(){
       speed: getSpeed(),
       chunk: els.chunkSize.value,
       font: els.fontSelect.value,
+      ctx: els.ctxToggle.checked,
       url: els.urlInput.value,
       name: els.fileName.textContent
     }));
@@ -483,6 +540,39 @@ function loadContent(text, persist = true){
   }
 }
 
+function escapeHtml(t){
+  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// 全文を表示（文章が変わった時だけ作り直し、以降はハイライト移動のみ）
+function updateContext(){
+  const box = els.context;
+  els.ctxBtn.textContent = els.ctxToggle.checked ? '文章を隠す' : '文章を表示';
+  const on = els.ctxToggle.checked && chunks.length > 0;
+  box.style.display = on ? '' : 'none';
+  if(!on) return;
+
+  const size = Math.max(1, Number(els.chunkSize.value) || 1);
+
+  if(ctxBuiltVersion !== ctxVersion){
+    const parts = new Array(chunks.length);
+    for(let i = 0; i < chunks.length; i++){
+      parts[i] = '<span data-i="' + i + '">' +
+        escapeHtml(tokens.slice(i * size, (i + 1) * size).join(joiner)) + '</span>' + escapeHtml(joiner);
+    }
+    box.innerHTML = parts.join('');
+    ctxBuiltVersion = ctxVersion;
+    curEl = null;
+  }
+
+  if(curEl) curEl.classList.remove('cur');
+  curEl = box.children[index] || null;
+  if(curEl){
+    curEl.classList.add('cur');
+    box.scrollTop = curEl.offsetTop - box.clientHeight / 2 + curEl.offsetHeight / 2;
+  }
+}
+
 function render(){
   scheduleSave();
   if(!chunks.length){
@@ -494,6 +584,7 @@ function render(){
     els.posInput.value = 0;
     els.posInput.max = 0;
     els.timeLeft.textContent = '残り 0:00';
+    updateContext();
     return;
   }
 
@@ -513,6 +604,7 @@ function render(){
   const m = Math.floor(seconds / 60);
   const s = String(seconds % 60).padStart(2,'0');
   els.timeLeft.textContent = `残り ${m}:${s}`;
+  updateContext();
 }
 
 function getSpeed(){
@@ -863,6 +955,37 @@ els.speedNumber.addEventListener('input', () => {
   els.speedLabel.textContent = els.speedNumber.value || '300';
 });
 
+// 「ここに飛ぶ」モード: ボタン → 文章をタップ → その位置から速読開始
+let jumpMode = false;
+function setJump(on){
+  if(on && !chunks.length) return;
+  jumpMode = on;
+  els.context.classList.toggle('jumping', on);
+  els.jumpBtn.classList.toggle('active', on);
+  els.jumpBtn.textContent = on ? 'キャンセル（文章をタップ）' : 'ここに飛ぶ';
+  if(on){
+    stop();
+    if(!els.ctxToggle.checked) setCtx(true);
+  }
+}
+els.jumpBtn.addEventListener('click', () => setJump(!jumpMode));
+els.context.addEventListener('click', e => {
+  if(!jumpMode) return;
+  const sp = e.target.closest('span[data-i]');
+  if(!sp || !chunks.length) return;
+  index = Number(sp.dataset.i);
+  setJump(false);
+  render();
+});
+function setCtx(on){
+  if(!on && jumpMode) setJump(false);
+  els.ctxToggle.checked = on;
+  updateContext();
+  saveState();
+}
+els.ctxToggle.addEventListener('change', () => setCtx(els.ctxToggle.checked));
+els.ctxBtn.addEventListener('click', () => setCtx(!els.ctxToggle.checked));
+
 els.fontSelect.addEventListener('change', () => {
   applyFont(els.fontSelect.value);
   saveState();
@@ -917,6 +1040,11 @@ document.addEventListener('keydown', e => {
   if(e.code === 'Space'){
     e.preventDefault();
     toggle();
+  }else if(e.code === 'Escape' && jumpMode){
+    setJump(false);
+  }else if(e.code === 'KeyH'){
+    e.preventDefault();
+    setCtx(!els.ctxToggle.checked);
   }else if(e.code === 'ArrowLeft'){
     e.preventDefault();
     step(-1);
@@ -944,6 +1072,7 @@ document.addEventListener('visibilitychange', () => {
       els.chunkSize.value = String(meta.chunk);
     }
     applyFont(meta.font);
+    if(meta.ctx === false) els.ctxToggle.checked = false;
     syncSpeed(meta.speed || 300);
     if(meta.url) els.urlInput.value = meta.url;
   }else{
