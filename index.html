@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>RSVP Reader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&family=Noto+Serif+JP:wght@400;700&family=Zen+Maru+Gothic:wght@400;700&family=Klee+One:wght@400;600&family=BIZ+UDPGothic:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root{
     color-scheme: light dark;
@@ -13,6 +16,7 @@
     --muted:#9da7b5;
     --accent:#7aa2ff;
     --border:#2a303b;
+    --flash-font:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP",sans-serif;
   }
   *{box-sizing:border-box}
   body{
@@ -70,6 +74,7 @@
     text-align:center;
     font-size:clamp(34px,7vw,96px);
     line-height:1.22;
+    font-family:var(--flash-font);
     font-weight:700;
     letter-spacing:.01em;
     word-break:keep-all;
@@ -261,6 +266,18 @@
         </select>
       </div>
 
+      <div class="row">
+        <label for="fontSelect">フォント</label>
+        <select id="fontSelect">
+          <option value="gothic">ゴシック（標準）</option>
+          <option value="mincho">明朝</option>
+          <option value="maru">丸ゴシック</option>
+          <option value="ud">UDゴシック</option>
+          <option value="textbook">教科書体風</option>
+          <option value="mono">等幅</option>
+        </select>
+      </div>
+
       <div class="controls">
         <button id="prev">◀</button>
         <button id="play" class="primary">再生</button>
@@ -312,6 +329,7 @@ const els = {
   speedNumber: document.getElementById('speedNumber'),
   speedLabel: document.getElementById('speedLabel'),
   chunkSize: document.getElementById('chunkSize'),
+  fontSelect: document.getElementById('fontSelect'),
   play: document.getElementById('play'),
   pause: document.getElementById('pause'),
   prev: document.getElementById('prev'),
@@ -405,7 +423,44 @@ function buildChunks(){
   render();
 }
 
-function loadContent(text){
+const FONTS = {
+  gothic:   'system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP","Hiragino Sans","Yu Gothic",Meiryo,sans-serif',
+  mincho:   '"Noto Serif JP","Hiragino Mincho ProN","Yu Mincho","MS PMincho",serif',
+  maru:     '"Zen Maru Gothic","Hiragino Maru Gothic ProN","Yu Gothic",sans-serif',
+  ud:       '"BIZ UDPGothic","UD Digi Kyokasho N-R","Yu Gothic",sans-serif',
+  textbook: '"Klee One","UD Digi Kyokasho NP-R","Yu Kyokasho","Hiragino Mincho ProN",serif',
+  mono:     'ui-monospace,SFMono-Regular,Menlo,Consolas,"Noto Sans Mono CJK JP","MS Gothic",monospace'
+};
+function applyFont(key){
+  if(!FONTS[key]) key = 'gothic';
+  document.documentElement.style.setProperty('--flash-font', FONTS[key]);
+  els.fontSelect.value = key;
+}
+
+const META_KEY = 'rsvp-reader:meta';
+const TEXT_KEY = 'rsvp-reader:text';
+let saveTimer = null;
+
+function saveState(){
+  if(!chunks.length) return;
+  try{
+    const size = Math.max(1, Number(els.chunkSize.value) || 1);
+    localStorage.setItem(META_KEY, JSON.stringify({
+      pos: index * size,            // 語数単位の位置（語数を変えても復元できる）
+      speed: getSpeed(),
+      chunk: els.chunkSize.value,
+      font: els.fontSelect.value,
+      url: els.urlInput.value,
+      name: els.fileName.textContent
+    }));
+  }catch{}
+}
+function scheduleSave(){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveState, 400);
+}
+
+function loadContent(text, persist = true){
   stop();
   index = 0;
   tokens = tokenize(text);
@@ -416,10 +471,20 @@ function loadContent(text){
     setError('文章を入力するか、テキストを含むファイルを選択してください。');
   } else {
     setError('');
+    if(persist){
+      try{
+        localStorage.setItem(TEXT_KEY, normalizeText(text));
+      }catch{
+        localStorage.removeItem(TEXT_KEY);
+        setError('文章が大きすぎてブラウザに保存できませんでした（開きなおすと続きから読めません）。');
+      }
+      scheduleSave();
+    }
   }
 }
 
 function render(){
+  scheduleSave();
   if(!chunks.length){
     els.flash.classList.add('idle');
     els.flash.textContent = '文章を入力するか、ファイルを選択してください';
@@ -490,6 +555,7 @@ function play(){
 }
 
 function stop(){
+  saveState();
   playing = false;
   clearTimeout(timer);
   timer = null;
@@ -762,7 +828,10 @@ async function readFile(file){
   }
 }
 
-els.loadText.addEventListener('click', () => loadContent(els.sourceText.value));
+els.loadText.addEventListener('click', () => {
+  els.fileName.textContent = '';
+  loadContent(els.sourceText.value);
+});
 els.loadUrl.addEventListener('click', loadFromUrl);
 els.urlInput.addEventListener('keydown', e => {
   if(e.key === 'Enter'){
@@ -792,6 +861,11 @@ els.speed.addEventListener('input', () => syncSpeed(els.speed.value));
 els.speedNumber.addEventListener('change', () => syncSpeed(els.speedNumber.value));
 els.speedNumber.addEventListener('input', () => {
   els.speedLabel.textContent = els.speedNumber.value || '300';
+});
+
+els.fontSelect.addEventListener('change', () => {
+  applyFont(els.fontSelect.value);
+  saveState();
 });
 
 els.chunkSize.addEventListener('change', () => {
@@ -852,8 +926,40 @@ document.addEventListener('keydown', e => {
   }
 });
 
-syncSpeed(300);
-render();
+window.addEventListener('beforeunload', saveState);
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'hidden') saveState();
+});
+
+// 前回の続きから復元
+(function restore(){
+  let meta = null, text = null;
+  try{
+    meta = JSON.parse(localStorage.getItem(META_KEY) || 'null');
+    text = localStorage.getItem(TEXT_KEY);
+  }catch{}
+
+  if(meta){
+    if(meta.chunk && [...els.chunkSize.options].some(o => o.value === String(meta.chunk))){
+      els.chunkSize.value = String(meta.chunk);
+    }
+    applyFont(meta.font);
+    syncSpeed(meta.speed || 300);
+    if(meta.url) els.urlInput.value = meta.url;
+  }else{
+    applyFont('gothic');
+    syncSpeed(300);
+  }
+
+  if(text){
+    els.sourceText.value = text;
+    loadContent(text, false);
+    const size = Math.max(1, Number(els.chunkSize.value) || 1);
+    index = Math.max(0, Math.min(chunks.length - 1, Math.floor((meta?.pos || 0) / size)));
+    if(meta?.name) els.fileName.textContent = meta.name;
+  }
+  render();
+})();
 </script>
 </body>
 </html>
